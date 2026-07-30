@@ -1,24 +1,43 @@
-from fastapi.testclient import TestClient
+import asyncio
 
-from src.app import app
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+from src.app import activities, app
 
 
-client = TestClient(app)
+def make_request(method: str, path: str, **kwargs):
+    async def _request():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+            return await client.request(method, path, **kwargs)
+
+    return asyncio.run(_request())
+
+
+@pytest.fixture(autouse=True)
+def reset_activity_state():
+    # Arrange
+    original_participants = activities["Chess Club"]["participants"][:]
+    activities["Chess Club"]["participants"] = ["michael@mergington.edu", "daniel@mergington.edu"]
+    yield
+    activities["Chess Club"]["participants"] = original_participants
 
 
 def test_unregister_participant_removes_email_from_activity():
-    response = client.delete(
-        "/activities/Chess Club/signup",
-        params={"email": "michael@mergington.edu"},
+    # Arrange
+    activity_name = "Chess Club"
+    email = "michael@mergington.edu"
+    expected_message = f"Removed {email} from {activity_name}"
+
+    # Act
+    response = make_request(
+        "DELETE",
+        f"/activities/{activity_name}/signup",
+        params={"email": email},
     )
 
+    # Assert
     assert response.status_code == 200
     data = response.json()
-    assert data["message"] == "Removed michael@mergington.edu from Chess Club"
-    assert "michael@mergington.edu" not in data["participants"]
-
-    # Restore state for later tests
-    client.post(
-        "/activities/Chess Club/signup",
-        params={"email": "michael@mergington.edu"},
-    )
+    assert data["message"] == expected_message
+    assert email not in data["participants"]
